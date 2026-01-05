@@ -67,18 +67,74 @@ A comprehensive architecture for a distributed homelab featuring dedicated NAS, 
 | System | Odroid H4 Ultra |
 | CPU | Intel N305 (8 cores) |
 | RAM | 32GB DDR5 (single SODIMM) |
-| Boot Drive | 128GB NVMe |
+| Boot Drive | USB 3.0 (128GB NVMe repurposed or dedicated USB drive) |
 | Data Drives | 4x 14TB SATA HDD |
 | RAID | RAID-Z2 (~28TB usable) |
-| Network | 2x Intel i226-V 2.5GbE |
+| Network | 2x Intel i226-V 2.5GbE + 1x 10GbE SFP+ (M.2) |
 | eGPU | Intel B580 via OCuLink |
 
 **Role**: Family NAS, media storage, backups, Jellyfin transcoding
 
-#### eGPU Configuration (Odroid)
+#### M.2 Bifurcation Configuration (Odroid)
+
+The Odroid H4 Ultra's M.2 slot is bifurcated using the [M.2 2x2 Card](https://www.hardkernel.com/shop/m-2-2x2-card/) to support both eGPU and 10GbE networking:
 
 ```
-M.2 Slot → M.2-to-OCuLink Adapter → OCuLink Cable → OCuLink-to-PCIe x16 → B580 GPU → External PSU
+Odroid H4 Ultra
+    │
+    └── M.2 PCIe x4 slot
+            │
+            ▼
+    ┌───────────────────┐
+    │   M.2 2x2 Card    │
+    │   (bifurcates     │
+    │    x4 → 2x x2)    │
+    └───────┬───────────┘
+            │
+    ┌───────┴───────┐
+    │               │
+    ▼               ▼
+┌────────┐    ┌────────┐
+│ Slot 1 │    │ Slot 2 │
+│ x2     │    │ x2     │
+│        │    │        │
+│ M.2 to │    │ M.2    │
+│OCuLink │    │ 10GbE  │
+│   ↓    │    │ 82599  │
+│ B580   │    │ SFP+   │
+│ eGPU   │    │        │
+└────────┘    └────────┘
+```
+
+**Bandwidth Analysis:**
+
+| Device | Needs | PCIe 3.0 x2 Provides | Status |
+|--------|-------|----------------------|--------|
+| B580 (transcoding) | ~4GB/s ideal | ~2GB/s | Acceptable for encode/decode |
+| 10GbE NIC | ~1.25GB/s | ~2GB/s | Plenty of headroom |
+
+Transcoding workloads (Quick Sync) are not bandwidth-intensive like gaming - x2 lanes are sufficient.
+
+#### Boot Drive Note
+
+With the M.2 slot used for bifurcation, the system boots from USB 3.0. TrueNAS doesn't require NVMe boot speeds - the OS loads once, then ZFS ARC handles everything in RAM. A quality USB drive (Samsung FIT Plus, SanDisk Extreme) works well.
+
+#### 10GbE NIC Details
+
+| Specification | Value |
+|---------------|-------|
+| Adapter | [Euqvos M.2 10GbE](https://www.amazon.com/dp/B0DDKXVJJ4) |
+| Chipset | Intel 82599 |
+| Port | SFP+ |
+| Speeds | 100/1000/10000 Mbps |
+| Driver Support | Native in TrueNAS/FreeBSD/Linux |
+
+**Requires**: SFP+ DAC cable (~$15-20) or SFP+ transceivers for fiber.
+
+#### eGPU Configuration
+
+```
+M.2 Slot 1 → M.2-to-OCuLink Adapter → OCuLink Cable → OCuLink-to-PCIe x16 → B580 GPU → External PSU
 ```
 
 The B580 provides hardware transcoding (AV1/HEVC/H.264) for Jellyfin/Plex, significantly outperforming the N305's integrated graphics.
@@ -203,9 +259,35 @@ The B580 provides hardware transcoding (AV1/HEVC/H.264) for Jellyfin/Plex, signi
 
 | Link | Speed | Notes |
 |------|-------|-------|
-| Proxmox ↔ TrueNAS | 10GbE or 2.5GbE | Critical for NFS performance |
+| Proxmox ↔ TrueNAS | **10GbE (SFP+ DAC)** | Direct connection, critical for NFS |
 | Desktop ↔ Proxmox | 2.5GbE | kubectl, SSH, RDP |
+| Desktop ↔ TrueNAS | 2.5GbE | File access |
 | Pi5 ↔ LAN | 1GbE | Pi5 hardware limit |
+
+#### 10GbE Backbone Topology
+
+```
+                         10GbE SFP+ DAC (Direct)
+Proxmox (X870 Taichi) ◄─────────────────────────► TrueNAS (M.2 82599)
+   │ 10GbE onboard                                    │ 2x 2.5GbE onboard
+   │                                                  │
+   │ 2.5GbE                                          │ 2.5GbE
+   ▼                                                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      2.5GbE Switch                          │
+├─────────────────────────────────────────────────────────────┤
+│     │              │              │              │          │
+│     ▼              ▼              ▼              ▼          │
+│  Desktop       Firewall         Pi5          Other         │
+│  2.5GbE        2.5GbE          1GbE         Devices        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The 10GbE direct link between Proxmox and TrueNAS enables:
+- Fast NFS for k3s persistent volumes
+- Quick VM backups to TrueNAS
+- High-speed iSCSI if needed
+- No switch bottleneck for storage traffic
 
 ### Remote Access
 
@@ -439,8 +521,11 @@ Client → Jellyfin (TrueNAS) → B580 Quick Sync → Media Files (RAID-Z2)
 | Intel i5-13600K | Desktop CPU | $260 |
 | MSI MAG B760M Mortar WiFi DDR5 | Desktop motherboard | $170 |
 | Intel X710-DA2 | Firewall 10GbE NIC | $50-60 (used) |
+| Euqvos M.2 10GbE (Intel 82599) | TrueNAS 10GbE NIC | $45 |
+| SFP+ DAC Cable (1-2m) | Proxmox ↔ TrueNAS link | $15-20 |
+| USB Boot Drive (if needed) | TrueNAS boot | $15-25 |
 | Case (if needed) | Desktop | $50-80 |
-| **Total** | | **~$530-570** |
+| **Total** | | **~$605-660** |
 
 ### Potential Sales
 
@@ -455,14 +540,19 @@ Selling both GPUs nearly covers the new build cost.
 
 ## References
 
+### Hardware
+- [Odroid H4 Ultra](https://www.hardkernel.com/shop/odroid-h4-ultra/)
+- [Odroid M.2 2x2 Bifurcation Card](https://www.hardkernel.com/shop/m-2-2x2-card/)
+- [Odroid M.2 4x1 Bifurcation Card](https://www.hardkernel.com/shop/m-2-4x1-card/)
+- [Euqvos M.2 10GbE NIC (Intel 82599)](https://www.amazon.com/dp/B0DDKXVJJ4)
+
+### Software
 - [TrueNAS Scale Documentation](https://www.truenas.com/docs/scale/)
 - [OPNsense Documentation](https://docs.opnsense.org/)
 - [k3s Documentation](https://docs.k3s.io/)
 - [Ollama](https://ollama.com/)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Exo - Distributed Inference](https://github.com/exo-explore/exo)
-- [Odroid H4 Ultra](https://www.hardkernel.com/shop/odroid-h4-ultra/)
-- [Odroid M.2 Expansion Cards](https://www.hardkernel.com/shop/m-2-4x1-card/)
 
 ---
 
