@@ -56,9 +56,22 @@ A comprehensive architecture for a distributed homelab featuring dedicated NAS, 
 | Storage | 1TB NVMe + 2x 512GB NVMe (ZFS mirror) |
 | Cooling | 320mm AIO |
 | Case | Thermaltake Tower 600 |
-| Network | 10GbE + 2.5GbE |
+| Network | Aquantia AQC113 10GbE + Realtek RTL8126 5GbE |
+| Wireless | WiFi 7 (802.11be) + Bluetooth 5.4 |
 
 **Role**: Kubernetes cluster, AI/ML inference, GPU compute, VM hosting
+
+> **Important**: The X870 Taichi Creator has driver considerations for Proxmox. See [X870 Taichi Creator Network Setup Guide](docs/x870-taichi-creator-network-setup.md) for RTL8126 driver installation.
+
+#### Proxmox Network Interfaces
+
+| NIC | Speed | Chip | Linux Driver | Kernel Status |
+|-----|-------|------|--------------|---------------|
+| 10GbE | 10000 Mbps | Marvell AQC113CS | `atlantic` | In-tree (kernel 5.8+) |
+| 5GbE | 5000 Mbps | Realtek RTL8126 | `r8126` | **Out-of-tree DKMS required** |
+| WiFi 7 | 802.11be | MediaTek (likely MT7925) | `mt7925e` | In-tree (kernel 6.5+) |
+
+**Recommendation**: Use the 10GbE port (AQC113) during Proxmox installation, then install the `r8126` DKMS driver post-install for 5GbE support. See the [setup guide](docs/x870-taichi-creator-network-setup.md) for detailed instructions.
 
 ### TrueNAS Server (Storage)
 
@@ -540,7 +553,12 @@ Selling both GPUs nearly covers the new build cost.
 
 ## References
 
+### Documentation
+- [X870 Taichi Creator Network Setup](docs/x870-taichi-creator-network-setup.md) - RTL8126/AQC113 driver setup for Proxmox
+- [OPNsense Setup Guide](docs/opnsense-setup-guide.md) - Firewall and Suricata IPS configuration
+
 ### Hardware
+- [ASRock X870 Taichi Creator](https://www.asrock.com/mb/AMD/X870%20Taichi%20Creator/index.asp)
 - [Odroid H4 Ultra](https://www.hardkernel.com/shop/odroid-h4-ultra/)
 - [Odroid M.2 2x2 Bifurcation Card](https://www.hardkernel.com/shop/m-2-2x2-card/)
 - [Odroid M.2 4x1 Bifurcation Card](https://www.hardkernel.com/shop/m-2-4x1-card/)
@@ -549,10 +567,16 @@ Selling both GPUs nearly covers the new build cost.
 ### Software
 - [TrueNAS Scale Documentation](https://www.truenas.com/docs/scale/)
 - [OPNsense Documentation](https://docs.opnsense.org/)
+- [Proxmox VE Documentation](https://pve.proxmox.com/wiki/Main_Page)
 - [k3s Documentation](https://docs.k3s.io/)
 - [Ollama](https://ollama.com/)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Exo - Distributed Inference](https://github.com/exo-explore/exo)
+
+### Drivers
+- [Realtek r8126 DKMS](https://github.com/awesometic/realtek-r8126-dkms) - RTL8126 5GbE driver
+- [Aquantia AQtion Driver](https://github.com/Aquantia/AQtion) - AQC113 development driver
+- [Atlantic Driver Docs](https://docs.kernel.org/networking/device_drivers/ethernet/aquantia/atlantic.html) - Kernel documentation
 
 ---
 
