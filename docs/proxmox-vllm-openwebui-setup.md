@@ -1,8 +1,8 @@
-# Proxmox vLLM + ComfyUI Integration Design
+# Proxmox LLM Inference Setup
 
 ## Overview
 
-Set up vLLM for LLM inference on Proxmox host, integrated with ComfyUI for workflow orchestration. Claude Code automates the entire setup.
+Set up LLM inference on Proxmox host with hybrid CPU/GPU support for 70B models, using llama.cpp with OpenWebUI as the frontend. Claude Code automates the entire setup.
 
 ## Hardware
 
@@ -15,19 +15,19 @@ Set up vLLM for LLM inference on Proxmox host, integrated with ComfyUI for workf
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Proxmox Host                         │
+│                    Proxmox Host (10.0.50.10)            │
 │                                                         │
 │  ┌──────────────────┐      ┌──────────────────────┐    │
-│  │  ComfyUI LXC     │      │  vLLM LXC            │    │
-│  │  (lightweight)   │─────▶│  NVIDIA 4070Ti Super │    │
-│  │  No GPU          │ API  │  16GB VRAM           │    │
-│  │  Orchestration   │      │  CPU offload enabled │    │
+│  │  OpenWebUI (116) │      │  llama.cpp LXC (118) │    │
+│  │  Web Frontend    │─────▶│  NVIDIA 4070Ti Super │    │
+│  │  Port 8080       │ API  │  16GB VRAM           │    │
+│  │                  │      │  + CPU hybrid (96GB) │    │
 │  └──────────────────┘      └──────────────────────┘    │
 │                                                         │
-│  ┌──────────────────┐                                   │
-│  │  Claude Code     │  (sets up & manages everything)  │
-│  │  New user        │                                   │
-│  └──────────────────┘                                   │
+│  ┌──────────────────┐      ┌──────────────────────┐    │
+│  │  Claude Code     │      │  vLLM LXC (117)      │    │
+│  │  claude user     │      │  (standby/alternate) │    │
+│  └──────────────────┘      └──────────────────────┘    │
 │                                                         │
 │  AMD 7900 XT (20GB) - idle/spare                       │
 └─────────────────────────────────────────────────────────┘
@@ -104,28 +104,32 @@ Set up vLLM for LLM inference on Proxmox host, integrated with ComfyUI for workf
 | Claude Code | ✅ | v2.1.12 installed at `/usr/bin/claude` |
 | vLLM repo | ✅ | Cloned to `/opt/vllm` |
 | NVIDIA drivers | ✅ | v580.126.09 on host, CUDA 13.0 |
-| vLLM LXC (117) | ✅ | 16 cores, 96GB RAM, GPU passthrough |
-| vLLM container | ✅ | Running `Mistral-7B-Instruct-v0.2-AWQ` on port 8000 |
-| OpenWebUI (116) | ✅ | Reduced to 4 cores, 8GB RAM, connected to vLLM |
+| vLLM LXC (117) | ⏸️ | 16 cores, 96GB RAM, GPU passthrough (standby) |
+| llama.cpp LXC (118) | ✅ | Hybrid CPU/GPU inference with 70B model |
+| OpenWebUI (116) | ✅ | Connected to llama.cpp |
 
-### Decision
+### Current Architecture
 
-**OpenWebUI selected as orchestration layer** (instead of ComfyUI) - already configured and connected to vLLM.
+**llama.cpp selected as primary inference server** - enables true hybrid CPU/GPU inference for 70B models.
 
 ### Access Details
 
 - **Proxmox Host:** `root@10.0.50.10`
 - **Claude user:** `claude@10.0.50.10`
-- **vLLM LXC:** `10.0.50.117:8000` (OpenAI-compatible API)
+- **llama.cpp LXC:** `10.0.50.118:8080` (OpenAI-compatible API)
+- **vLLM LXC:** `10.0.50.117:8000` (standby, GPU conflict with llama.cpp)
 - **OpenWebUI:** `http://10.0.50.116:8080`
-- **vLLM repo:** `/opt/vllm`
 
 ### Current Model
 
-**TheBloke/Mistral-7B-Instruct-v0.2-AWQ** (7B parameters, 4-bit AWQ quantization)
+**Meta Llama 3.1 70B Instruct** (Q4_K_M quantization, GGUF format)
+- Model size: 39.6 GB
+- Parameters: 70.55 billion
 - Context length: 16384 tokens
-- VRAM usage: ~4GB (leaves ~11GB for KV cache)
-- Excellent performance for instruction-following tasks
+- **Hybrid inference**: 25 layers on GPU (~12.7GB), 55 layers on CPU (~27GB)
+- **KV cache**: 1.5GB GPU + 3.6GB CPU
+- **Performance**: ~2.2 tokens/sec generation, ~44 tokens/sec prompt processing
+- Inference speed scales with CPU threads (16 configured)
 
 ### Model Sizing Lessons Learned
 
@@ -140,18 +144,100 @@ Set up vLLM for LLM inference on Proxmox host, integrated with ComfyUI for workf
 
 **Key insight:** Mixture-of-Experts (MoE) models like Mixtral must load ALL expert weights into memory, not just the 2 active experts per token. Mixtral-8x7B has 46.7B total params despite using only ~13B per forward pass.
 
-### Alternative Models to Try
+### llama.cpp Configuration
 
-For maximum capability on 16GB VRAM:
+Location: `/opt/llama-cpp/docker-compose.yml` in LXC 118
+
+```yaml
+services:
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-server
+    security_opt:
+      - apparmor=unconfined
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models
+    command:
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - -m
+      - /models/model.gguf
+      - -ngl
+      - "25"              # GPU layers (adjust based on VRAM)
+      - -c
+      - "16384"           # Context length
+      - --threads
+      - "16"              # CPU threads
+    restart: unless-stopped
+```
+
+**Key parameters:**
+- `-ngl 25`: Number of layers on GPU. Max ~25-28 for 16GB VRAM with this model.
+- `-c 16384`: Context window size. Can increase if reducing GPU layers.
+- `--threads 16`: CPU threads for hybrid computation.
+
+### Switching Between vLLM and llama.cpp
+
+The GPU can only be used by one container at a time. To switch:
+
+**Switch to vLLM (smaller models, faster):**
+```bash
+# On LXC 118
+cd /opt/llama-cpp && docker compose down
+# On LXC 117
+cd /opt/vllm && docker compose up -d
+# Update OpenWebUI
+echo 'OPENAI_API_BASE_URLS=http://10.0.50.117:8000/v1
+OPENAI_API_KEYS=sk-no-key-needed' > /root/.env
+systemctl restart open-webui
+```
+
+**Switch to llama.cpp (70B model, hybrid):**
+```bash
+# On LXC 117
+cd /opt/vllm && docker compose down
+# On LXC 118
+cd /opt/llama-cpp && docker compose up -d
+# Update OpenWebUI
+echo 'OPENAI_API_BASE_URLS=http://10.0.50.118:8080/v1
+OPENAI_API_KEYS=sk-no-key-needed' > /root/.env
+systemctl restart open-webui
+```
+
+### Alternative Models for llama.cpp
+
+Download GGUF models to `/opt/llama-cpp/models/` in LXC 118:
+
+```bash
+# Qwen2.5 72B (similar quality to Llama 70B)
+wget -O /opt/llama-cpp/models/model.gguf \
+  "https://huggingface.co/Qwen/Qwen2.5-72B-Instruct-GGUF/resolve/main/qwen2.5-72b-instruct-q4_k_m.gguf"
+
+# DeepSeek Coder V2 Lite (smaller, coding focused)
+wget -O /opt/llama-cpp/models/model.gguf \
+  "https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf"
+```
+
+### Alternative Models for vLLM (LXC 117)
+
+For GPU-only inference with smaller models:
 ```yaml
 # Edit /opt/vllm/docker-compose.yml in LXC 117
 command:
   - --model
-  - Qwen/Qwen2.5-14B-Instruct-AWQ  # or TheBloke/Qwen2.5-14B-Instruct-AWQ
+  - Qwen/Qwen2.5-14B-Instruct-AWQ
   - --quantization
   - awq
   - --max-model-len
-  - "8192"  # Reduced context to fit
+  - "8192"
   - --gpu-memory-utilization
   - "0.95"
   - --host
@@ -164,10 +250,27 @@ command:
 2. **AppArmor in LXC** - Docker containers need `--security-opt apparmor=unconfined`
 3. **nouveau blacklisted** - `/etc/modprobe.d/blacklist-nouveau.conf` added
 4. **MoE model sizing** - Mixtral/similar MoE models require full expert weight loading
+5. **GPU sharing** - vLLM and llama.cpp cannot run simultaneously (single GPU)
+6. **NVIDIA driver version** - LXC containers need matching `libnvidia-compute-580` package
+
+### Hybrid Inference Explained
+
+llama.cpp supports true hybrid CPU/GPU inference:
+
+- **GPU layers**: Handle part of the transformer forward pass on VRAM (fast)
+- **CPU layers**: Handle remaining layers using system RAM (slower but allows large models)
+- **KV cache**: Split between GPU and CPU memory proportionally
+
+This differs from vLLM's `--cpu-offload-gb` which only offloads static weights while keeping KV cache on GPU, limiting effective model size.
+
+**Performance tuning:**
+- Increase `-ngl` to use more GPU (faster, but limited by VRAM)
+- Decrease `-ngl` to fit larger models or longer context
+- Increase `--threads` if CPU-bound (up to physical core count)
 
 ## Future Expansion
 
-- Claude Code orchestration (call vLLM + ComfyUI programmatically)
-- Additional models as needed
-- Potential AMD GPU utilization if ROCm matures
-- ComfyUI integration pending user clarification
+- AMD 7900 XT utilization with ROCm (if maturity improves)
+- ComfyUI integration for image generation workflows
+- Claude Code orchestration for programmatic LLM access
+- Model routing based on task complexity
