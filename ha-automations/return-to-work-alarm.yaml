@@ -1,0 +1,113 @@
+# Return to Work Alarm
+# Triggers at scheduled time, plays on all Android TVs
+# Repeats every 2 minutes until dismissed via HA dashboard
+#
+# SETUP:
+# 1. Replace media_player entities with your actual Android TV names
+# 2. Add input_boolean.work_alarm_active to HA (or create via UI)
+# 3. Copy automation to /config/automations.yaml or add via UI
+
+# Input boolean to track alarm state (add to configuration.yaml or create via UI)
+# input_boolean:
+#   work_alarm_active:
+#     name: Work Alarm Active
+#     initial: off
+
+automation:
+  - id: 'return_to_work_alarm_trigger'
+    alias: 'Return to Work - Trigger Alarm'
+    trigger:
+      - platform: time
+        at: '20:00:00'
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.work_alarm_active
+      - service: script.turn_on
+        target:
+          entity_id: script.work_alarm_announcement
+
+  - id: 'return_to_work_alarm_repeat'
+    alias: 'Return to Work - Repeat Until Dismissed'
+    trigger:
+      - platform: state
+        entity_id: input_boolean.work_alarm_active
+        to: 'on'
+        for: '00:02:00'
+    condition:
+      - condition: state
+        entity_id: input_boolean.work_alarm_active
+        state: 'on'
+    action:
+      - service: script.turn_on
+        target:
+          entity_id: script.work_alarm_announcement
+      # Re-trigger self by toggling (creates repeat loop)
+      - delay: '00:00:01'
+      - event: repeat_work_alarm
+
+  - id: 'return_to_work_alarm_loop'
+    alias: 'Return to Work - Loop Handler'
+    trigger:
+      - platform: event
+        event_type: repeat_work_alarm
+    condition:
+      - condition: state
+        entity_id: input_boolean.work_alarm_active
+        state: 'on'
+    action:
+      - delay: '00:01:59'
+      - service: script.turn_on
+        target:
+          entity_id: script.work_alarm_announcement
+      - condition: state
+        entity_id: input_boolean.work_alarm_active
+        state: 'on'
+      - event: repeat_work_alarm
+
+script:
+  work_alarm_announcement:
+    alias: 'Work Alarm Announcement'
+    sequence:
+      # Wake up TVs first
+      - service: media_player.turn_on
+        target:
+          entity_id:
+            - media_player.living_room_tv      # REPLACE with your entity
+            - media_player.bedroom_tv          # REPLACE with your entity
+            - media_player.office_tv           # REPLACE with your entity
+            - media_player.kitchen_tv          # REPLACE with your entity
+            # Add more as needed
+      - delay: '00:00:02'
+      # Set volume
+      - service: media_player.volume_set
+        target:
+          entity_id:
+            - media_player.living_room_tv
+            - media_player.bedroom_tv
+            - media_player.office_tv
+            - media_player.kitchen_tv
+        data:
+          volume_level: 0.7
+      # TTS Announcement
+      - service: tts.speak
+        target:
+          entity_id: tts.piper  # Or your TTS engine
+        data:
+          media_player_entity_id:
+            - media_player.living_room_tv
+            - media_player.bedroom_tv
+            - media_player.office_tv
+            - media_player.kitchen_tv
+          message: "Time to return to work. The design document is ready for implementation. Dismiss this alarm from the computer."
+
+# Dashboard button to dismiss (add to Lovelace)
+# type: button
+# name: Dismiss Work Alarm
+# tap_action:
+#   action: call-service
+#   service: input_boolean.turn_off
+#   target:
+#     entity_id: input_boolean.work_alarm_active
+# icon: mdi:alarm-off
+# show_state: true

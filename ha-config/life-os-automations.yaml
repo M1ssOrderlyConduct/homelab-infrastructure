@@ -1,0 +1,347 @@
+# Life Operating System - State Machine Automations
+# Add to automations.yaml or include via automation: !include
+
+# ============================================
+# WORK → BREAK (Forced when timer expires)
+# ============================================
+- id: 'life_os_work_timer_expired'
+  alias: 'Life OS: Work Timer Expired - Force Break'
+  description: 'When work block timer ends, force break state'
+  trigger:
+    - platform: state
+      entity_id: timer.working
+      to: 'idle'
+      from: 'active'
+  condition:
+    - condition: state
+      entity_id: input_select.system_state
+      state: 'work'
+  action:
+    # Transition to break
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.system_state
+      data:
+        option: 'break'
+    # Increment work blocks counter
+    - service: counter.increment
+      target:
+        entity_id: counter.work_blocks_today
+    # Enable network block
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.break_network_blocked
+    # Start break timer (short)
+    - service: timer.start
+      target:
+        entity_id: timer.on_break_short
+    # Announce on TVs
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Work block complete. Break time. Stand up and stretch. Break ends in 15 minutes."
+  mode: single
+
+# ============================================
+# BREAK → WORK (When break timer expires)
+# ============================================
+- id: 'life_os_break_timer_expired'
+  alias: 'Life OS: Break Timer Expired - Resume Work'
+  description: 'When break timer ends, return to work state'
+  trigger:
+    - platform: state
+      entity_id: timer.on_break_short
+      to: 'idle'
+      from: 'active'
+    - platform: state
+      entity_id: timer.on_break_long
+      to: 'idle'
+      from: 'active'
+  condition:
+    - condition: state
+      entity_id: input_select.system_state
+      state: 'break'
+  action:
+    # Disable network block
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.break_network_blocked
+    # Check time - if after wind_down time, go to wind_down instead
+    - choose:
+        - conditions:
+            - condition: time
+              after: '17:00:00'
+          sequence:
+            - service: input_select.select_option
+              target:
+                entity_id: input_select.system_state
+              data:
+                option: 'wind_down'
+            - service: tts.speak
+              target:
+                entity_id: tts.google_translate_en_com
+              data:
+                media_player_entity_id: media_player.family_room_tv
+                message: "Break complete. It's past 5, transitioning to wind down."
+      default:
+        - service: input_select.select_option
+          target:
+            entity_id: input_select.system_state
+          data:
+            option: 'work'
+        - service: timer.start
+          target:
+            entity_id: timer.working
+        - service: tts.speak
+          target:
+            entity_id: tts.google_translate_en_com
+          data:
+            media_player_entity_id: media_player.family_room_tv
+            message: "Break over. Starting work block."
+  mode: single
+
+# ============================================
+# START WORK (Manual or scheduled)
+# ============================================
+- id: 'life_os_start_work'
+  alias: 'Life OS: Start Work Block'
+  description: 'Start work when entering work state'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'work'
+  action:
+    - service: timer.start
+      target:
+        entity_id: timer.working
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Work block started. 90 minutes on the clock. Focus."
+  mode: single
+
+# ============================================
+# BRING IT HOME (Evening routine with kids)
+# ============================================
+- id: 'life_os_bring_it_home'
+  alias: 'Life OS: Bring It Home Mode'
+  description: 'Evening routine - dinner, baths, bedtime'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'bring_it_home'
+  action:
+    # Cancel any active work timers
+    - service: timer.cancel
+      target:
+        entity_id: timer.working
+    # Disable network block if active
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.break_network_blocked
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Bring it home mode. Focus on dinner, baths, and bedtime routine."
+  mode: single
+
+# ============================================
+# MORNING ROUTINE
+# ============================================
+- id: 'life_os_morning_routine'
+  alias: 'Life OS: Morning Routine Started'
+  description: 'Morning startup sequence'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'morning_routine'
+  action:
+    # Reset daily counter
+    - service: counter.reset
+      target:
+        entity_id: counter.work_blocks_today
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Good morning. Morning routine started. Take your time, then say ready to work."
+  mode: single
+
+# ============================================
+# WIND DOWN
+# ============================================
+- id: 'life_os_wind_down'
+  alias: 'Life OS: Wind Down Mode'
+  description: 'End of work day transition'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'wind_down'
+  action:
+    - service: timer.cancel
+      target:
+        entity_id: timer.working
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.break_network_blocked
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Wind down mode. Work day complete. Transitioning to evening."
+  mode: single
+
+# ============================================
+# RECOVERY MODE
+# ============================================
+- id: 'life_os_recovery_mode'
+  alias: 'Life OS: Recovery Mode Activated'
+  description: 'Recovery mode after crisis or burnout'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'recovery'
+  action:
+    - service: timer.cancel
+      target:
+        entity_id: timer.working
+    - service: timer.cancel
+      target:
+        entity_id: timer.on_break_short
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.break_network_blocked
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Recovery mode activated. All timers cancelled. Focus on rest and ASF tasks only. No surge mode for 7 days."
+  mode: single
+
+# ============================================
+# SYSTEM OFF
+# ============================================
+- id: 'life_os_system_off'
+  alias: 'Life OS: System Off'
+  description: 'End of day - all systems off'
+  trigger:
+    - platform: state
+      entity_id: input_select.system_state
+      to: 'off'
+  action:
+    - service: timer.cancel
+      target:
+        entity_id: timer.working
+    - service: timer.cancel
+      target:
+        entity_id: timer.on_break_short
+    - service: timer.cancel
+      target:
+        entity_id: timer.on_break_long
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.break_network_blocked
+  mode: single
+
+# ============================================
+# CUSTODY STATE CHANGE HANDLING
+# ============================================
+- id: 'life_os_kids_home'
+  alias: 'Life OS: Kids Home - Adjust Mode'
+  description: 'When kids arrive, adjust available modes'
+  trigger:
+    - platform: state
+      entity_id: input_select.full_house
+      to: 'kids_home'
+  action:
+    - service: tts.speak
+      target:
+        entity_id: tts.google_translate_en_com
+      data:
+        media_player_entity_id: media_player.family_room_tv
+        message: "Kids home. Surge mode disabled. Work blocks limited to 90 minutes."
+  mode: single
+
+# ============================================
+# VOICE COMMANDS (for Wyoming/Assist)
+# ============================================
+- id: 'life_os_voice_start_work'
+  alias: 'Life OS: Voice - Start Work'
+  description: 'Voice command to start work'
+  trigger:
+    - platform: conversation
+      command:
+        - "ready to work"
+        - "start work"
+        - "begin work"
+        - "let's work"
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.system_state
+      data:
+        option: 'work'
+
+- id: 'life_os_voice_take_break'
+  alias: 'Life OS: Voice - Take Break'
+  description: 'Voice command to take break (only if work blocks > 0)'
+  trigger:
+    - platform: conversation
+      command:
+        - "take a break"
+        - "need a break"
+        - "break time"
+  condition:
+    - condition: numeric_state
+      entity_id: counter.work_blocks_today
+      above: 0
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.system_state
+      data:
+        option: 'break'
+    - service: timer.start
+      target:
+        entity_id: timer.on_break_short
+
+- id: 'life_os_voice_wind_down'
+  alias: 'Life OS: Voice - Wind Down'
+  description: 'Voice command to wind down'
+  trigger:
+    - platform: conversation
+      command:
+        - "wind down"
+        - "end work"
+        - "done for the day"
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.system_state
+      data:
+        option: 'wind_down'
+
+- id: 'life_os_voice_bring_it_home'
+  alias: 'Life OS: Voice - Bring It Home'
+  description: 'Voice command for evening routine'
+  trigger:
+    - platform: conversation
+      command:
+        - "bring it home"
+        - "evening routine"
+        - "family time"
+  action:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.system_state
+      data:
+        option: 'bring_it_home'

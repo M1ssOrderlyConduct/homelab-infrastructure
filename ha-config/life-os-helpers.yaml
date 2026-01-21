@@ -1,0 +1,235 @@
+# Life Operating System - Input Helpers
+# Add to configuration.yaml or include as package
+
+# ============================================
+# INPUT SELECTS (States)
+# ============================================
+input_select:
+  system_state:
+    name: System State
+    options:
+      - "off"
+      - morning_startup
+      - work
+      - break
+      - wind_down
+      - recovery
+    initial: "off"
+    icon: mdi:state-machine
+
+  custody_state:
+    name: Custody State
+    options:
+      - kids_home
+      - kids_away
+      - transition
+    initial: kids_away
+    icon: mdi:account-child
+
+  legal_state:
+    name: Legal State
+    options:
+      - quiet
+      - active
+      - deadline
+    initial: quiet
+    icon: mdi:gavel
+
+  energy_state:
+    name: Energy State
+    options:
+      - low
+      - normal
+      - high
+    initial: normal
+    icon: mdi:battery-medium
+
+  operating_mode:
+    name: Operating Mode
+    options:
+      - asf
+      - mvdb
+      - normal
+      - surge
+      - recovery
+    initial: normal
+    icon: mdi:cog
+
+# ============================================
+# TIMERS
+# ============================================
+timer:
+  work_block:
+    name: Work Block Timer
+    duration: "01:30:00"
+    icon: mdi:timer-sand
+    restore: true
+
+  break_duration:
+    name: Break Timer
+    duration: "00:15:00"
+    icon: mdi:timer-pause
+    restore: true
+
+  wind_down:
+    name: Wind Down Timer
+    duration: "00:30:00"
+    icon: mdi:weather-sunset
+    restore: true
+
+# ============================================
+# COUNTERS
+# ============================================
+counter:
+  work_blocks_today:
+    name: Work Blocks Today
+    initial: 0
+    step: 1
+    minimum: 0
+    maximum: 10
+    icon: mdi:counter
+
+  breaks_taken_today:
+    name: Breaks Taken Today
+    initial: 0
+    step: 1
+    minimum: 0
+    maximum: 10
+    icon: mdi:coffee
+
+  emergency_override_count:
+    name: Emergency Overrides (Weekly)
+    initial: 0
+    step: 1
+    minimum: 0
+    maximum: 100
+    icon: mdi:alert-circle
+
+  escalation_level:
+    name: Current Escalation Level
+    initial: 0
+    step: 1
+    minimum: 0
+    maximum: 3
+    icon: mdi:arrow-up-bold
+
+# ============================================
+# INPUT BOOLEANS
+# ============================================
+input_boolean:
+  break_network_block:
+    name: Break Network Block Active
+    initial: false
+    icon: mdi:wifi-off
+
+  recovery_mode:
+    name: Recovery Mode
+    initial: false
+    icon: mdi:hospital-box
+
+  surge_available:
+    name: Surge Mode Available
+    initial: true
+    icon: mdi:lightning-bolt
+
+  work_alarm_active:
+    name: Work Alarm Active
+    initial: false
+    icon: mdi:alarm
+
+  coach_enabled:
+    name: Coach Enabled
+    initial: true
+    icon: mdi:account-voice
+
+# ============================================
+# INPUT DATETIMES
+# ============================================
+input_datetime:
+  work_start_time:
+    name: Work Start Time
+    has_date: false
+    has_time: true
+    icon: mdi:clock-start
+
+  work_end_time:
+    name: Work End Time
+    has_date: false
+    has_time: true
+    icon: mdi:clock-end
+
+  last_emergency_override:
+    name: Last Emergency Override
+    has_date: true
+    has_time: true
+    icon: mdi:alert-circle-outline
+
+  last_surge_mode:
+    name: Last Surge Mode
+    has_date: true
+    has_time: true
+    icon: mdi:lightning-bolt-outline
+
+# ============================================
+# INPUT NUMBERS
+# ============================================
+input_number:
+  work_block_duration:
+    name: Work Block Duration (minutes)
+    min: 30
+    max: 180
+    step: 15
+    initial: 90
+    unit_of_measurement: min
+    icon: mdi:timer
+    mode: slider
+
+  break_duration_setting:
+    name: Break Duration (minutes)
+    min: 5
+    max: 30
+    step: 5
+    initial: 15
+    unit_of_measurement: min
+    icon: mdi:timer-pause
+    mode: slider
+
+  max_work_blocks:
+    name: Max Work Blocks Per Day
+    min: 1
+    max: 8
+    step: 1
+    initial: 4
+    icon: mdi:numeric
+    mode: slider
+
+  surge_cooldown_days:
+    name: Surge Cooldown (days)
+    min: 0
+    max: 7
+    step: 1
+    initial: 1
+    icon: mdi:timer-sand
+    mode: slider
+
+# ============================================
+# INPUT TEXT (for context)
+# ============================================
+input_text:
+  today_priority:
+    name: Today's Priority
+    initial: ""
+    max: 255
+    icon: mdi:target
+
+  current_task:
+    name: Current Task
+    initial: ""
+    max: 255
+    icon: mdi:clipboard-text
+
+  github_stakes:
+    name: Current Stakes
+    initial: ""
+    max: 500
+    icon: mdi:alert-decagram
