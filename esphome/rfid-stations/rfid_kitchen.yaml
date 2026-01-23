@@ -1,0 +1,10 @@
+# RFID Station - Kitchen
+# Tracks: kitchen cleaned (daily reset)
+
+substitutions:
+  device_name: rfid-kitchen
+  friendly_name: "RFID Kitchen"
+  location_id: kitchen
+
+packages:
+  device: !include rfid_base.yaml

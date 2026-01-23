@@ -1,0 +1,23 @@
+# RFID Station - Kid Room Template
+# Copy and modify for each kid's room
+
+# For 9yo room:
+substitutions:
+  device_name: rfid-kid9-room
+  friendly_name: "RFID Kid9 Room"
+  location_id: kid9_room
+
+packages:
+  device: !include rfid_base.yaml
+
+# For 6yo room - create rfid_kid6_room.yaml:
+# substitutions:
+#   device_name: rfid-kid6-room
+#   friendly_name: "RFID Kid6 Room"
+#   location_id: kid6_room
+
+# For 3yo room - create rfid_kid3_room.yaml:
+# substitutions:
+#   device_name: rfid-kid3-room
+#   friendly_name: "RFID Kid3 Room"
+#   location_id: kid3_room

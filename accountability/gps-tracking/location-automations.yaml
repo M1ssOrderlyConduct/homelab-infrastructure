@@ -1,0 +1,111 @@
+# GPS Location Tracking Automations
+# Verifies appointment attendance via zone entry/exit
+
+input_boolean:
+  therapist_visit_this_week:
+    name: Therapist Visit This Week
+  lawyer_visit_this_week:
+    name: Lawyer Visit This Week
+
+input_datetime:
+  last_therapist_visit:
+    name: Last Therapist Visit
+    has_date: true
+    has_time: true
+  last_lawyer_visit:
+    name: Last Lawyer Visit
+    has_date: true
+    has_time: true
+  zone_enter_therapist:
+    name: Zone Enter Therapist
+    has_date: true
+    has_time: true
+
+input_number:
+  therapist_session_duration:
+    name: Therapist Session Duration
+    min: 0
+    max: 180
+    unit_of_measurement: minutes
+
+automation:
+  # Track when entering therapist zone
+  - alias: "GPS - Therapist Zone Enter"
+    trigger:
+      - platform: zone
+        entity_id: person.tim
+        zone: zone.therapist_office
+        event: enter
+    action:
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.zone_enter_therapist
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
+  # Verify session duration on zone exit
+  - alias: "GPS - Verify Therapist Session"
+    trigger:
+      - platform: zone
+        entity_id: person.tim
+        zone: zone.therapist_office
+        event: leave
+    variables:
+      enter_time: "{{ states('input_datetime.zone_enter_therapist') | as_timestamp }}"
+      leave_time: "{{ now().timestamp() }}"
+      duration_minutes: "{{ ((leave_time - enter_time) / 60) | int }}"
+    action:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.therapist_session_duration
+        data:
+          value: "{{ duration_minutes }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ duration_minutes >= 45 }}"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.therapist_visit_this_week
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.last_therapist_visit
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+              - service: persistent_notification.create
+                data:
+                  title: "Therapist Session Verified"
+                  message: "Session duration: {{ duration_minutes }} minutes"
+
+  # Track lawyer visits
+  - alias: "GPS - Lawyer Zone Visit"
+    trigger:
+      - platform: zone
+        entity_id: person.tim
+        zone: zone.lawyer_office
+        event: enter
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.lawyer_visit_this_week
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.last_lawyer_visit
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
+  # Reset weekly location tasks
+  - alias: "GPS - Reset Weekly Tasks"
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    condition:
+      - condition: time
+        weekday: mon
+    action:
+      - service: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.therapist_visit_this_week
+            - input_boolean.lawyer_visit_this_week

@@ -1,0 +1,10 @@
+# RFID Station - Garage
+# Tracks: garage/project work sessions
+
+substitutions:
+  device_name: rfid-garage
+  friendly_name: "RFID Garage"
+  location_id: garage
+
+packages:
+  device: !include rfid_base.yaml

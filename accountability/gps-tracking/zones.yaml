@@ -1,0 +1,27 @@
+# Home Assistant GPS Zones
+# Add to configuration.yaml or zones.yaml
+
+zone:
+  - name: "Therapist Office"
+    latitude: XX.XXXXX  # Replace with actual coordinates
+    longitude: -XX.XXXXX
+    radius: 50
+    icon: mdi:head-heart
+
+  - name: "Lawyer Office"
+    latitude: XX.XXXXX
+    longitude: -XX.XXXXX
+    radius: 50
+    icon: mdi:scale-balance
+
+  - name: "School"
+    latitude: XX.XXXXX
+    longitude: -XX.XXXXX
+    radius: 100
+    icon: mdi:school
+
+  - name: "Courthouse"
+    latitude: XX.XXXXX
+    longitude: -XX.XXXXX
+    radius: 75
+    icon: mdi:gavel

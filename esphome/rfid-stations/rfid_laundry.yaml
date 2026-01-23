@@ -1,0 +1,10 @@
+# RFID Station - Laundry Room
+# Tracks: laundry started, dried, folded/put away (multi-scan workflow)
+
+substitutions:
+  device_name: rfid-laundry
+  friendly_name: "RFID Laundry Room"
+  location_id: laundry
+
+packages:
+  device: !include rfid_base.yaml

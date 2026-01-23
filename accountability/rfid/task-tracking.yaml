@@ -1,0 +1,237 @@
+# RFID Task Tracking System
+# Home Assistant configuration for RFID-based task verification
+
+# Input helpers for task state
+input_boolean:
+  # Laundry workflow (multi-step)
+  task_laundry_started:
+    name: Laundry Started
+  task_laundry_dried:
+    name: Laundry Dried
+  task_laundry_put_away:
+    name: Laundry Put Away
+
+  # Daily room cleaning
+  task_kitchen_cleaned:
+    name: Kitchen Cleaned
+  task_living_room_tidied:
+    name: Living Room Tidied
+  task_master_bedroom:
+    name: Master Bedroom Done
+  task_kid9_room:
+    name: Kid 9 Room Clean
+  task_kid6_room:
+    name: Kid 6 Room Clean
+  task_kid3_room:
+    name: Kid 3 Room Clean
+
+  # Other tasks
+  task_garage_session:
+    name: Garage Work Session
+
+input_datetime:
+  last_laundry_complete:
+    name: Last Laundry Complete
+    has_date: true
+    has_time: true
+  last_kitchen_clean:
+    name: Last Kitchen Clean
+    has_date: true
+    has_time: true
+
+# Tag to person mapping (update after first scans reveal tag IDs)
+# Format: "XX-XX-XX-XX": "person_name"
+
+automation:
+  # Main RFID scan processor
+  - alias: "RFID Task Processing"
+    trigger:
+      - platform: event
+        event_type: esphome.rfid_scan
+    variables:
+      tag_people:
+        "A1-B2-C3-D4": "tim"
+        "A1-B2-C3-D5": "tim_backup"
+        "E5-F6-G7-H8": "kid_9"
+        "E5-F6-G7-H9": "kid_6"
+        "E5-F6-G7-HA": "kid_3"
+      location_tasks:
+        laundry: "task_laundry_put_away"
+        kitchen: "task_kitchen_cleaned"
+        living_room: "task_living_room_tidied"
+        garage: "task_garage_session"
+        kid9_room: "task_kid9_room"
+        kid6_room: "task_kid6_room"
+        kid3_room: "task_kid3_room"
+        master_bedroom: "task_master_bedroom"
+      person: "{{ tag_people.get(trigger.event.data.tag_id, 'unknown') }}"
+      location: "{{ trigger.event.data.location }}"
+      task_entity: "input_boolean.{{ location_tasks.get(location, 'unknown') }}"
+    condition:
+      - condition: template
+        value_template: "{{ person != 'unknown' }}"
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: "{{ task_entity }}"
+      - service: logbook.log
+        data:
+          name: "Task Verified"
+          message: "{{ person }} completed {{ location }} task"
+          entity_id: "{{ task_entity }}"
+      - service: persistent_notification.create
+        data:
+          title: "Task Complete"
+          message: "{{ person }} - {{ location | replace('_', ' ') | title }}"
+
+  # Laundry multi-step workflow
+  - alias: "Laundry Workflow Tracking"
+    trigger:
+      - platform: event
+        event_type: esphome.rfid_scan
+        event_data:
+          location: laundry
+    action:
+      - choose:
+          # Step 1: Started
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.task_laundry_started
+                state: "off"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.task_laundry_started
+              - service: notify.notify
+                data:
+                  message: "Laundry started - scan again when moving to dryer"
+
+          # Step 2: In dryer
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.task_laundry_started
+                state: "on"
+              - condition: state
+                entity_id: input_boolean.task_laundry_dried
+                state: "off"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.task_laundry_dried
+              - service: notify.notify
+                data:
+                  message: "Laundry drying - scan when folded and put away"
+
+          # Step 3: Complete
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.task_laundry_dried
+                state: "on"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.task_laundry_put_away
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.last_laundry_complete
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+              - service: input_boolean.turn_off
+                target:
+                  entity_id:
+                    - input_boolean.task_laundry_started
+                    - input_boolean.task_laundry_dried
+              - service: notify.notify
+                data:
+                  message: "Laundry complete!"
+
+  # Laundry stuck alert
+  - alias: "Laundry Stuck Alert"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.task_laundry_started
+        to: "on"
+        for:
+          hours: 3
+    condition:
+      - condition: state
+        entity_id: input_boolean.task_laundry_put_away
+        state: "off"
+    action:
+      - service: tts.speak
+        target:
+          entity_id: media_player.living_room
+        data:
+          message: "Laundry has been sitting for 3 hours. Finish the cycle."
+
+  # Daily task reset
+  - alias: "Daily Task Reset"
+    trigger:
+      - platform: time
+        at: "04:00:00"
+    action:
+      - service: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.task_kitchen_cleaned
+            - input_boolean.task_living_room_tidied
+            - input_boolean.task_master_bedroom
+            - input_boolean.task_kid9_room
+            - input_boolean.task_kid6_room
+            - input_boolean.task_kid3_room
+            - input_boolean.task_garage_session
+
+# Template sensors for dashboard
+template:
+  - sensor:
+      - name: "Daily Task Summary"
+        state: >
+          {% set tasks = [
+            states('input_boolean.task_kitchen_cleaned'),
+            states('input_boolean.task_living_room_tidied'),
+            states('input_boolean.task_kid9_room'),
+            states('input_boolean.task_kid6_room'),
+            states('input_boolean.task_laundry_put_away'),
+          ] %}
+          {{ tasks | select('eq', 'on') | list | count }}/{{ tasks | count }}
+        attributes:
+          pending: >
+            {% set task_data = [
+              ('Kitchen', states('input_boolean.task_kitchen_cleaned')),
+              ('Living Room', states('input_boolean.task_living_room_tidied')),
+              ('Kid 9 Room', states('input_boolean.task_kid9_room')),
+              ('Kid 6 Room', states('input_boolean.task_kid6_room')),
+              ('Laundry', states('input_boolean.task_laundry_put_away')),
+            ] %}
+            {{ task_data | selectattr('1', 'ne', 'on') | map(attribute='0') | list | join(', ') }}
+          complete: >
+            {% set task_data = [
+              ('Kitchen', states('input_boolean.task_kitchen_cleaned')),
+              ('Living Room', states('input_boolean.task_living_room_tidied')),
+              ('Kid 9 Room', states('input_boolean.task_kid9_room')),
+              ('Kid 6 Room', states('input_boolean.task_kid6_room')),
+              ('Laundry', states('input_boolean.task_laundry_put_away')),
+            ] %}
+            {{ task_data | selectattr('1', 'eq', 'on') | map(attribute='0') | list | join(', ') }}
+
+      - name: "Household Task Score"
+        state: >
+          {% set all_tasks = [
+            states('input_boolean.task_kitchen_cleaned'),
+            states('input_boolean.task_living_room_tidied'),
+            states('input_boolean.task_kid9_room'),
+            states('input_boolean.task_kid6_room'),
+            states('input_boolean.task_laundry_put_away'),
+          ] %}
+          {{ ((all_tasks | select('eq', 'on') | list | count) / (all_tasks | count) * 100) | int }}%
+        unit_of_measurement: "%"
+
+      - name: "Kid 9 Daily Tasks"
+        state: >
+          {% set tasks = [states('input_boolean.task_kid9_room')] %}
+          {{ tasks | select('eq', 'on') | list | count }}/{{ tasks | count }}
+
+      - name: "Kid 6 Daily Tasks"
+        state: >
+          {% set tasks = [states('input_boolean.task_kid6_room')] %}
+          {{ tasks | select('eq', 'on') | list | count }}/{{ tasks | count }}

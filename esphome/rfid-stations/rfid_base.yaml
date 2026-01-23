@@ -1,0 +1,73 @@
+# RFID Base Package - Include this in station-specific configs
+# Usage: See rfid_laundry.yaml for example
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+  ap:
+    ssid: "${device_name}-fallback"
+    password: !secret fallback_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+logger:
+  level: INFO
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+rc522_spi:
+  cs_pin: GPIO5
+  reset_pin: GPIO22
+  on_tag:
+    then:
+      - homeassistant.tag_scanned: !lambda 'return x;'
+      - homeassistant.event:
+          event: esphome.rfid_scan
+          data:
+            tag_id: !lambda 'return x;'
+            location: ${location_id}
+      - light.turn_on:
+          id: status_led
+          effect: pulse
+      - delay: 2s
+      - light.turn_off: status_led
+
+# Onboard LED feedback
+output:
+  - platform: ledc
+    pin: GPIO2
+    id: led_output
+
+light:
+  - platform: monochromatic
+    id: status_led
+    output: led_output
+    effects:
+      - pulse:
+          transition_length: 200ms
+          update_interval: 200ms
+
+# Heartbeat sensor
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} Status"

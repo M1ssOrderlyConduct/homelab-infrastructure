@@ -1,0 +1,68 @@
+# Home Assistant Voice Pipeline Configuration
+# Add to configuration.yaml or include as separate file
+
+# Whisper (local STT)
+whisper:
+  model: large-v3
+  language: en
+
+# Ollama conversation agent
+conversation:
+  - platform: ollama
+    name: Family Guide
+    url: http://10.0.50.201:11434  # Adjust to your Ollama host
+    model: qwen2.5:7b-instruct
+    system_prompt: !include family_guide_prompt.txt
+
+# Piper TTS
+tts:
+  - platform: piper
+    voice: en_US-lessac-medium
+
+# Morning briefing automation
+automation:
+  - alias: "Morning Framework - Tim"
+    trigger:
+      - platform: time
+        at: "06:00:00"
+    action:
+      - service: conversation.process
+        data:
+          agent_id: conversation.family_guide
+          text: "Generate Tim's morning briefing: today's calendar, top 3 priorities, any commitments from yesterday that didn't happen"
+      - service: tts.speak
+        target:
+          entity_id: media_player.master_bedroom_speaker
+        data:
+          message: "{{ response.text }}"
+
+  - alias: "Kids Bedtime Warning - 30min"
+    trigger:
+      - platform: time
+        at: "19:30:00"
+    condition:
+      - condition: time
+        weekday: [sun, mon, tue, wed, thu]
+    action:
+      - service: tts.speak
+        target:
+          entity_id: media_player.living_room
+        data:
+          message: "Thirty minutes to bedtime. Start wrapping up. Teeth, pajamas, then we read."
+
+  - alias: "Tim Evening Accountability Check"
+    trigger:
+      - platform: time
+        at: "21:00:00"
+    action:
+      - service: conversation.process
+        data:
+          agent_id: conversation.family_guide
+          text: >
+            Evening accountability check for Tim.
+
+            VERIFIED DATA TODAY:
+            - Task completion: {{ states('sensor.daily_task_summary') }}
+            - Pending tasks: {{ state_attr('sensor.daily_task_summary', 'pending') }}
+
+            Address what wasn't completed. Be direct about patterns if this is repeat avoidance.
