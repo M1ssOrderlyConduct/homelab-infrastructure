@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=EthShare
+Comment=WiFi to Ethernet sharing toggle
+Exec=ethshare
+Icon=network-transmit-receive
+Terminal=false
+Categories=Network;
+StartupNotify=false
+Keywords=wifi;ethernet;sharing;network;bridge;kvm;

@@ -1,0 +1,4 @@
+# Allow any user to run the ethshare helper without a password
+# For per-user installs, replace the path and restrict to a specific user:
+#   deain ALL=(root) NOPASSWD: /home/deain/.local/share/ethshare/helper.sh
+ALL ALL=(root) NOPASSWD: /usr/local/share/ethshare/helper.sh
