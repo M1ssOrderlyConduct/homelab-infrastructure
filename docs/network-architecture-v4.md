@@ -118,7 +118,7 @@ GS305E stays in the drawer until more wired ports are needed.
 
 (These ensure filtering happens on the bridge, not inconsistently on members.)
 
-**OPEN ISSUE: Suricata/IPS + bridge interaction.** Intel X540 (ix0) is incompatible with Suricata netmap. IPS placement with bridge0 and VLANs needs further research — enabling on the parent vs bridge vs member interfaces has non-obvious behavior. Do not enable Suricata until this is resolved.
+**RESOLVED: Suricata/IPS placement strategy (see Section 16).**
 
 ---
 
@@ -1100,3 +1100,235 @@ When needed:
 - **GS305E:** Insert between igb1 and Flint 2 when more wired devices needed
 - **Additional VLANs:** Guest WiFi, lab network, etc.
 - **Proxmox VM VLANs:** Enable VLAN-aware bridging on vmbr0, tag VMs onto 20/30/40
+
+---
+
+## 16. Suricata IPS — Placement, Enablement Checklist, and Future-Proofing
+
+### Background
+
+Suricata IPS uses netmap for inline packet capture. Netmap attaches directly to physical NIC drivers — it cannot reliably attach to bridge or VLAN virtual interfaces. OPNsense Issue #8949 (closed NOT_PLANNED) confirms bridge0 IPS is unsupported. The correct strategy is to enable IPS on **physical parent interfaces only**.
+
+### IPS Coverage Map
+
+| Interface | Driver | Suricata IPS | Covers | Notes |
+|-----------|--------|-------------|--------|-------|
+| igb0 | igb | **YES** | VLAN 10 (Home Assistant) | Native netmap |
+| igb1 | igb | **YES** | VLANs 20, 30, 40, 50 (all trunk traffic) | Native netmap, enable promiscuous mode |
+| ix0 (X540) | ix | **NO** | — | Confirmed broken: memory alloc failures, network freezes (#7151, #7405) |
+| ix0 (X710) | ixl | **YES** (after swap) | Proxmox → bridge0 ingress | Native netmap confirmed on ixl |
+| bridge0 | — | **NEVER** | — | Emulated netmap, drops traffic (#8949) |
+| igb1.20/.30/.40/.50 | — | **NEVER** | — | Virtual VLAN interfaces = emulated netmap, slow |
+
+**Coverage gap (current):** L2-local traffic on bridge0 between Proxmox (ix0) and Flint VLAN 50 (igb1.50) that stays within the bridge is not inspected. Routed traffic (internet, inter-VLAN) traverses igb1 and IS inspected. Gap closes when X710 replaces X540.
+
+### Phase A — Pre-requisites (before enabling anything)
+
+- [ ] **A1.** Interfaces > Settings — disable ALL hardware offloading:
+  - [ ] Hardware CRC: OFF
+  - [ ] Hardware TSO: OFF
+  - [ ] Hardware LRO: OFF
+  - [ ] VLAN Hardware Filtering: OFF
+  - **REBOOT after changing these.** Offloads interfere with netmap packet capture.
+  - **Pass:** After reboot, `ifconfig igb1 | grep options` shows no `RXCSUM`, `TXCSUM`, `TSO4`, `TSO6`, `LRO`, `VLAN_HWFILTER`
+  - **Fail:** If offloads persist, check System > Settings > Tunables for overrides
+
+- [ ] **A2.** System > Settings > Tunables — verify:
+  - `net.link.bridge.pfil_member=0` (already set for bridge0)
+  - `net.link.bridge.pfil_bridge=1` (already set for bridge0)
+  - `dev.netmap.admode` — leave at default (do NOT force emulation)
+  - **Pass:** `sysctl dev.netmap.admode` returns default value
+  - **Fail:** If set to 2, remove the override
+
+- [ ] **A3.** Verify netmap is loaded:
+  - SSH to OPNsense: `kldstat | grep netmap`
+  - **Pass:** Shows `netmap.ko` loaded
+  - **Fail:** `kldload netmap` and investigate why it's not auto-loaded
+
+- [ ] **A4.** Verify igb driver netmap capability:
+  - `sysctl dev.igb` — confirm queues exist
+  - `ifconfig igb1` — confirm interface is UP with VLANs
+  - **Pass:** Interface is up, VLANs are passing traffic normally
+
+- [ ] **A5.** Take OPNsense config backup:
+  - System > Configuration > Backups > Download
+  - **This is your rollback point.** If Suricata breaks traffic, restore this backup.
+
+### Phase B — Enable on igb1 (VLANs 20/30/40/50) — IDS First
+
+- [ ] **B1.** Services > Intrusion Detection > Administration
+  - Enabled: ✓
+  - IPS mode: OFF (start as IDS — alert only, no blocking)
+  - Promiscuous mode: ✓ (required for VLAN trunk inspection)
+  - Pattern matcher: Hyperscan
+  - Interfaces: select **igb1** only (the parent, NOT individual VLANs)
+  - Home networks: `10.0.20.0/24,10.0.30.0/24,10.0.40.0/24,10.0.50.0/24`
+  - **Pass:** Settings save without error
+  - **Fail:** If igb1 not listed, check Interfaces > Assignments
+
+- [ ] **B2.** Services > Intrusion Detection > Administration > Download
+  - Enable rulesets:
+    - ET Open (free, comprehensive baseline)
+    - Abuse.ch SSL Blacklist
+    - Abuse.ch URLhaus
+  - Click "Download & Update Rules"
+  - **Pass:** Rules download completes, rule count > 30,000
+  - **Fail:** Check DNS resolution and internet access from OPNsense
+
+- [ ] **B3.** Rule categories to enable (Services > Intrusion Detection > Rules):
+  - **Enable all ET Open categories initially** — tune down later
+  - Priority categories for home network:
+    - `emerging-malware` — malware C2, droppers
+    - `emerging-trojan` — trojans, RATs
+    - `emerging-exploit` — exploitation attempts
+    - `emerging-scan` — port scans, recon
+    - `emerging-dos` — DoS patterns
+    - `emerging-web_server` — if running any web services
+    - `emerging-dns` — DNS abuse
+    - `emerging-policy` — policy violations (P2P, TOR, etc.)
+  - Categories to consider disabling if noisy:
+    - `emerging-games` — generates alerts for normal gaming (Kids VLAN)
+    - `emerging-chat` — chat protocol detection (may be noisy)
+    - `emerging-info` — informational, high volume
+  - **Pass:** Categories selected, Apply clicked without error
+
+- [ ] **B4.** Apply and verify IDS mode:
+  - Click Apply
+  - SSH: `pgrep suricata` — confirm running
+  - SSH: `sockstat | grep suricata` — confirm bound to igb1
+  - Monitor: Services > Intrusion Detection > Log File
+  - **Pass:** Suricata running, alerts appearing in log, NO traffic disruption
+  - **Fail:** If traffic drops, immediately disable Suricata (uncheck Enabled, Apply)
+  - **Wait 48 hours in IDS mode** before proceeding to IPS
+
+- [ ] **B5.** Performance baseline (while in IDS mode):
+  - From a Personal VLAN device: run speed test, note throughput
+  - SSH: `top -b | grep suricata` — note CPU usage
+  - Compare to pre-Suricata baseline
+  - **Pass:** Throughput within 10% of baseline, CPU < 60%
+  - **Fail:** If significant degradation, check rule count and consider disabling noisy categories
+
+- [ ] **B6.** Review alerts and build suppression list (48hr window):
+  - Services > Intrusion Detection > Alerts
+  - Identify false positives (normal traffic flagged)
+  - For each false positive: click the ✕ to create a suppression entry
+  - Common home network false positives:
+    - DNS queries to public resolvers (if AdGuard upstream uses them)
+    - mDNS/SSDP cast traffic
+    - Game server connections
+    - Smart TV telemetry
+  - **Pass:** False positive rate manageable (< 20 per hour)
+
+- [ ] **B7.** Switch to IPS mode (inline blocking):
+  - Services > Intrusion Detection > Administration
+  - IPS mode: ON
+  - Apply
+  - **Immediately test:**
+    - Personal device: browse internet, run speed test
+    - Kids device: browse, run a game
+    - IoT: verify cameras/NVR still connect
+  - **Pass:** All VLANs functional, alerts still logging, some blocks appearing
+  - **Fail:** Disable IPS mode (set back to IDS), review what was blocked in Alerts tab
+  - **Rollback:** If catastrophic, uncheck Enabled entirely
+
+### Phase C — Enable on igb0 (VLAN 10 / Home Assistant)
+
+- [ ] **C1.** Add igb0 to Suricata interfaces:
+  - Services > Intrusion Detection > Administration
+  - Interfaces: add **igb0** alongside igb1
+  - Add to Home networks: `10.0.10.0/24`
+  - Apply
+  - **Pass:** Suricata restarts, both interfaces listed in `sockstat | grep suricata`
+
+- [ ] **C2.** Verify HA connectivity:
+  - Access HA dashboard from Personal VLAN
+  - Confirm HA → IoT device control works
+  - Confirm HA integrations (internet) work
+  - **Pass:** All HA functions operational
+  - **Fail:** Remove igb0 from Suricata interfaces, investigate alerts
+
+### Phase D — Future: Enable on ix0 after X710 Swap
+
+**Do not start Phase D until X540 is physically replaced with X710.**
+
+- [ ] **D1.** After physical NIC swap, verify ixl driver loads:
+  - SSH: `dmesg | grep ixl` — confirm X710 detected
+  - SSH: `ifconfig ix0` — confirm interface UP
+  - SSH: `sysctl dev.ixl.0` — confirm driver parameters
+  - **Pass:** ixl driver loaded, ix0 is UP, bridge0 still works
+  - **Fail:** Check PCIe slot, BIOS settings, FreeBSD HCL
+
+- [ ] **D2.** Verify netmap capability on ixl:
+  - SSH: `dmesg | grep "netmap queues"` — should show TX/RX queue counts for ixl
+  - **Pass:** Shows `netmap queues/slots: TX 8/1024, RX 8/1024` (or similar)
+  - **Fail:** Verify OPNsense stock ixl driver (not Intel custom driver)
+
+- [ ] **D3.** Verify bridge0 still functional:
+  - Ping 10.0.50.10 (Proxmox) from OPNsense
+  - Ping 10.0.50.1 from Proxmox
+  - Verify Proxmox UI accessible at 10.0.50.10:8006
+  - **Pass:** Bridge traffic flows normally
+  - **Fail:** Check `ifconfig bridge0`, verify ix0 is still a member
+
+- [ ] **D4.** Verify hw.ixl.enable_head_writeback is disabled:
+  - SSH: `sysctl hw.ixl.enable_head_writeback`
+  - **Pass:** Returns 0 (OPNsense default)
+  - **Fail:** Add tunable: System > Settings > Tunables > `hw.ixl.enable_head_writeback=0`
+
+- [ ] **D5.** Add ix0 to Suricata interfaces:
+  - Services > Intrusion Detection > Administration
+  - Interfaces: add **ix0** alongside igb0 and igb1
+  - Start in IDS mode first (disable IPS temporarily)
+  - Apply
+  - **Pass:** Suricata restarts, three interfaces in `sockstat | grep suricata`
+  - **Fail:** If traffic drops on bridge0, immediately remove ix0 from Suricata
+
+- [ ] **D6.** Validate bridge0 traffic with Suricata on ix0:
+  - Ping flood test: `ping -f -c 1000 10.0.50.10` from OPNsense
+  - Sustained transfer: scp a large file to/from Proxmox
+  - Monitor: `top -b | grep suricata` — CPU check
+  - **Pass:** No packet loss, bridge stable, CPU acceptable
+  - **Fail:** Remove ix0 from Suricata, file OPNsense bug report with ixl/netmap details
+
+- [ ] **D7.** Re-enable IPS mode with ix0 included:
+  - Switch IPS mode back ON
+  - Test all three paths: internet via igb1, HA via igb0, Proxmox via ix0
+  - **Pass:** Full IPS coverage on all physical ingress points
+  - **Fail:** Fall back to IDS on ix0 only, keep IPS on igb0+igb1
+
+### Phase E — Rule Tuning and Maintenance
+
+- [ ] **E1.** Schedule automatic rule updates:
+  - Services > Intrusion Detection > Administration > Schedule
+  - Set to daily update (recommended: 03:00 local time)
+  - Enable "Update and reload on schedule"
+
+- [ ] **E2.** Suppression list management:
+  - Services > Intrusion Detection > Administration > User defined tab
+  - Export suppression list periodically (backup)
+  - Review and prune monthly
+
+- [ ] **E3.** Splunk syslog integration:
+  - System > Settings > Logging > Targets
+  - Add target: 10.0.50.208, UDP/514 (or TCP/514)
+  - Transport: UDP (or TCP for reliability)
+  - Applications: select `suricata`
+  - Also enable: firewall filter logs
+  - For EVE JSON output (richer data):
+    - Services > Intrusion Detection > Administration
+    - Enable "Eve syslog output"
+  - **Pass:** Splunk receiving events from OPNsense
+  - **Fail:** Check network path (VLAN 50 rules must allow Suricata host → 10.0.50.208:514)
+
+- [ ] **E4.** Log retention policy:
+  - Local Suricata logs: 7 days (Services > Intrusion Detection > Administration)
+  - Splunk retention: set based on license/storage
+  - During commissioning: keep verbose logging 30 days minimum
+  - After stable: reduce to alerts-only forwarding
+
+- [ ] **E5.** Monthly review cadence:
+  - Review top 10 triggered rules — are they real threats or noise?
+  - Check Suricata CPU/memory usage trend
+  - Update suppression list
+  - Review any new ET Open rule categories
+  - Test IPS bypass: temporarily disable IPS, run EICAR test download, re-enable, confirm detection
