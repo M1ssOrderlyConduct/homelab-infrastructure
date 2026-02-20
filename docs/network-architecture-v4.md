@@ -1154,6 +1154,24 @@ Suricata IPS uses netmap for inline packet capture. Netmap attaches directly to 
   - System > Configuration > Backups > Download
   - **This is your rollback point.** If Suricata breaks traffic, restore this backup.
 
+- [ ] **A6.** Splunk syslog integration (Splunk already running at 10.0.50.208):
+  - System > Settings > Logging > Targets
+  - Add target: 10.0.50.208, UDP/514 (or TCP/514)
+  - Transport: UDP (or TCP for reliability)
+  - Applications: select `suricata`
+  - Also enable: firewall filter logs
+  - For EVE JSON output (richer data):
+    - Services > Intrusion Detection > Administration
+    - Enable "Eve syslog output"
+  - **Pass:** Splunk receiving events from OPNsense
+  - **Fail:** Check network path (VLAN 50 rules must allow Suricata host → 10.0.50.208:514)
+
+- [ ] **A7.** Log retention policy:
+  - Local Suricata logs: 7 days (Services > Intrusion Detection > Administration)
+  - Splunk retention: set based on license/storage
+  - During commissioning: keep verbose logging 30 days minimum
+  - After stable: reduce to alerts-only forwarding
+
 ### Phase B — Enable on igb1 (VLANs 20/30/40/50) — IDS First
 
 - [ ] **B1.** Services > Intrusion Detection > Administration
@@ -1308,25 +1326,7 @@ Suricata IPS uses netmap for inline packet capture. Netmap attaches directly to 
   - Export suppression list periodically (backup)
   - Review and prune monthly
 
-- [ ] **E3.** Splunk syslog integration:
-  - System > Settings > Logging > Targets
-  - Add target: 10.0.50.208, UDP/514 (or TCP/514)
-  - Transport: UDP (or TCP for reliability)
-  - Applications: select `suricata`
-  - Also enable: firewall filter logs
-  - For EVE JSON output (richer data):
-    - Services > Intrusion Detection > Administration
-    - Enable "Eve syslog output"
-  - **Pass:** Splunk receiving events from OPNsense
-  - **Fail:** Check network path (VLAN 50 rules must allow Suricata host → 10.0.50.208:514)
-
-- [ ] **E4.** Log retention policy:
-  - Local Suricata logs: 7 days (Services > Intrusion Detection > Administration)
-  - Splunk retention: set based on license/storage
-  - During commissioning: keep verbose logging 30 days minimum
-  - After stable: reduce to alerts-only forwarding
-
-- [ ] **E5.** Monthly review cadence:
+- [ ] **E3.** Monthly review cadence:
   - Review top 10 triggered rules — are they real threats or noise?
   - Check Suricata CPU/memory usage trend
   - Update suppression list
